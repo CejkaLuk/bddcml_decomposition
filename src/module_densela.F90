@@ -32,12 +32,19 @@ module module_densela
 ! debugging mode
       logical,parameter,private :: debug = .false.
 ! profiling 
-      logical,private ::           profile = .false.
+      logical,private ::           profile = .true.
 
 ! library to use
-      integer,parameter :: DENSELA_LAPACK = 1
-      integer,parameter :: DENSELA_MAGMA  = 2
-      integer,parameter :: DENSELA_TNL    = 3
+      integer,parameter :: DENSELA_LAPACK                = 1
+      integer,parameter :: DENSELA_MAGMA                 = 2
+      integer,parameter :: DENSELA_TNL                   = 3
+      integer,parameter :: DENSELA_DECOMP                = 4
+
+! Matrix/Vector formatting to use
+      integer,parameter :: DECOMP_MF_UNIT_DIAG_U         = 11
+      integer,parameter :: DECOMP_MF_UNIT_DIAG_L         = 12
+      integer,parameter :: DECOMP_VF_PERMUTATION         = 21
+      integer,parameter :: DECOMP_VF_PIVOTING            = 22
 
       !integer,parameter,private :: library = DENSELA_MAGMA
       !integer,parameter,private :: library = DENSELA_LAPACK
@@ -178,6 +185,8 @@ subroutine densela_getrf_matrix_on_gpu(library, m, n, dA, lddA, ipiv)
             !   call magmaf_sgemv(trans, m, n, alpha, A, lda, x, incx, beta, y, incy, queue)
             !end if
 #endif
+         case (DENSELA_DECOMP)
+            call decomposer_on_gpu(m, dA, ipiv, DECOMP_MF_UNIT_DIAG_U, DECOMP_VF_PERMUTATION)
          case default
             call error(routine_name, "Illegal library.")
       end select
@@ -317,6 +326,8 @@ subroutine densela_getrs_matrix_on_gpu(library, trans, n, nrhs, dA, lddA, ipiv, 
             ! free memory on GPU
             ierr = magmaf_free(dB)
 #endif
+         case (DENSELA_DECOMP)
+            call solver_on_gpu(n, nrhs, dA, B, ipiv, DECOMP_MF_UNIT_DIAG_U, DECOMP_VF_PERMUTATION)
          case default
             call error(routine_name, "Illegal library.")
       end select

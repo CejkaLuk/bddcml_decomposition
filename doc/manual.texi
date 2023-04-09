@@ -26,7 +26,7 @@ END-INFO-DIR-ENTRY
 @parskip 2mm
 
 @end iftex
-@node Top,,, (dir)
+
 
 @c table of contents
 @contents

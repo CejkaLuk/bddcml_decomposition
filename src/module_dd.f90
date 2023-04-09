@@ -5180,6 +5180,14 @@ subroutine dd_prepare_aug(sub,comm_self)
       ! LAPACK related variables
       integer, external :: ILAENV
 
+      ! .mtx file variables - 2x time vars; string for time in ms; file name
+      logical :: write_mtx_to_file = .false.
+      integer, dimension(8):: v
+      integer(8) :: timems
+      character(len=70) :: file_id
+      character(len=70) :: file_name
+      integer(8)  :: num_nz
+
       ! check the prerequisities
       !if (sub%is_degenerated) then
       !   return
@@ -5260,7 +5268,50 @@ subroutine dd_prepare_aug(sub,comm_self)
             goto 133
          end if
 
-         call densela_copy_matrix_to_gpu(DENSELA_MAGMA, sub%laaug_dense1, sub%laaug_dense2, sub%aaug_dense, &
+         if (write_mtx_to_file) then
+            ! Matrix: sub%aaug_dense
+            write(*,*) "----------------------------------------"
+            !do, i=1,m
+            !   do, j=1,n
+            !      write (*,*) A(i,j)
+            !   enddo
+            !enddo
+            call date_and_time(values=v)
+            timems=(v(8)+1000*(v(7)+60*(v(6)+60*(v(5)+24*(v(3))))))
+            write (*,'(a)') '[START] - Writing matrix to file...'
+
+            num_nz = 0
+            do, i=1,sub%laaug_dense1
+                  do, j=1,sub%laaug_dense2
+                     if ( .not. sub%aaug_dense(i,j).eq.0) then
+                           num_nz = num_nz + 1
+                     end if
+                  enddo
+            enddo
+
+            ! Write the integer into a string:
+            write(file_id, '(i0)') timems
+            ! Construct the filename:
+            file_name = '../p_on_cube_matrices/matrices/poc-8_4_2-' // trim(adjustl(file_id)) // '.mtx'
+            ! output data into a file
+            open(1, file = trim(file_name), status = 'new')
+            write(1,*)'%%MatrixMarket matrix coordinate real general'
+            write(1,*) sub%laaug_dense1,sub%laaug_dense2,num_nz
+            do, i=1,sub%laaug_dense1
+               do, j=1,sub%laaug_dense2
+                  if ( .not. sub%aaug_dense(i,j).eq.0) then
+                        write(1,*) i,j,sub%aaug_dense(i,j)
+                  end if
+               enddo
+            enddo
+            close(1)
+            write (*,'(a)') '[DONE] - Writing matrix to file...'
+            write(*,*) "----------------------------------------"
+         end if
+
+         ! call densela_copy_matrix_to_gpu(DENSELA_MAGMA, sub%laaug_dense1, sub%laaug_dense2, sub%aaug_dense, &
+         !                                 sub%daaug_dense, sub%laaug_dense1)
+         call densela_copy_matrix_to_gpu(DENSELA_TNL, sub%laaug_dense1, sub%laaug_dense2, sub%aaug_dense, &
                                          sub%daaug_dense, sub%laaug_dense1)
          deallocate(sub%aaug_dense)
 
@@ -5271,7 +5322,9 @@ subroutine dd_prepare_aug(sub,comm_self)
             sub%laaug_ipiv = sub%laaug_dense1
             allocate(sub%aaug_ipiv(sub%laaug_ipiv))
             !call densela_getrf(DENSELA_LAPACK, sub%laaug_dense1, sub%laaug_dense2, sub%aaug_dense, sub%laaug_dense1, sub%aaug_ipiv)
-            call densela_getrf_matrix_on_gpu(DENSELA_MAGMA, sub%laaug_dense1, sub%laaug_dense2, sub%daaug_dense, &
+            ! call densela_getrf_matrix_on_gpu(DENSELA_MAGMA, sub%laaug_dense1, sub%laaug_dense2, sub%daaug_dense, &
+            !                                  sub%laaug_dense1, sub%aaug_ipiv)
+            call densela_getrf_matrix_on_gpu(DENSELA_DECOMP, sub%laaug_dense1, sub%laaug_dense2, sub%daaug_dense, &
                                              sub%laaug_dense1, sub%aaug_ipiv)
          else if (sub%matrixtype .eq. 1 .or. sub%matrixtype .eq. 2) then
             ! in symmetric case, saddle point problem makes the augmented matrix indefinite,
@@ -5279,7 +5332,9 @@ subroutine dd_prepare_aug(sub,comm_self)
             sub%laaug_ipiv = sub%laaug_dense1
             allocate(sub%aaug_ipiv(sub%laaug_ipiv))
             !call densela_sytrf(DENSELA_LAPACK, 'U', sub%laaug_dense1, sub%aaug_dense, sub%laaug_dense1, sub%aaug_ipiv)
-            call densela_getrf_matrix_on_gpu(DENSELA_MAGMA, sub%laaug_dense1, sub%laaug_dense2, sub%daaug_dense, &
+            ! call densela_getrf_matrix_on_gpu(DENSELA_MAGMA, sub%laaug_dense1, sub%laaug_dense2, sub%daaug_dense, &
+            !                                  sub%laaug_dense1, sub%aaug_ipiv)
+            call densela_getrf_matrix_on_gpu(DENSELA_DECOMP, sub%laaug_dense1, sub%laaug_dense2, sub%daaug_dense, &
                                              sub%laaug_dense1, sub%aaug_ipiv)
          else 
             call error(routine_name,'Matrixtype not set for subdomain:', sub%isub)
@@ -5849,14 +5904,18 @@ subroutine dd_solve_aug(sub, vec,lvec, nrhs, solve_adjoint)
             end if
             !call densela_getrs(DENSELA_LAPACK, transa, sub%laaug_dense1, nrhs, &
             !                   sub%aaug_dense, sub%laaug_dense1, sub%aaug_ipiv, vec, ldb)
-            call densela_getrs_matrix_on_gpu(DENSELA_MAGMA, transa, sub%laaug_dense1, nrhs, sub%daaug_dense, &
+            ! call densela_getrs_matrix_on_gpu(DENSELA_MAGMA, transa, sub%laaug_dense1, nrhs, sub%daaug_dense, &
+            !                                  sub%laaug_dense1, sub%aaug_ipiv, vec, ldb)
+            call densela_getrs_matrix_on_gpu(DENSELA_DECOMP, transa, sub%laaug_dense1, nrhs, sub%daaug_dense, &
                                              sub%laaug_dense1, sub%aaug_ipiv, vec, ldb)
          else if (sub%matrixtype .eq. 1 .or. sub%matrixtype .eq. 2) then
             ! in symmetric case, saddle point problem makes the augmented matrix indefinite,
             ! even if the original matrix is SPD, use LDLT
             !call densela_sytrs(DENSELA_LAPACK, 'U', sub%laaug_dense1, nrhs, &
             !                   sub%aaug_dense, sub%laaug_dense1, sub%aaug_ipiv, vec, ldb)
-            call densela_getrs_matrix_on_gpu(DENSELA_MAGMA, 'N', sub%laaug_dense1, nrhs, sub%daaug_dense, &
+            ! call densela_getrs_matrix_on_gpu(DENSELA_MAGMA, 'N', sub%laaug_dense1, nrhs, sub%daaug_dense, &
+            !                                  sub%laaug_dense1, sub%aaug_ipiv, vec, ldb)
+            call densela_getrs_matrix_on_gpu(DENSELA_DECOMP, 'N', sub%laaug_dense1, nrhs, sub%daaug_dense, &
                                              sub%laaug_dense1, sub%aaug_ipiv, vec, ldb)
          else 
             write(*,*) 'DD_SOLVE_AUG: Matrixtype not set for subdomain:', sub%isub
@@ -14754,7 +14813,8 @@ subroutine dd_finalize(sub)
       if (allocated(sub%aaug_dense)) then
          deallocate(sub%aaug_dense)
       end if
-      call densela_clear_matrix_on_gpu(DENSELA_MAGMA, sub%daaug_dense)
+      ! call densela_clear_matrix_on_gpu(DENSELA_MAGMA, sub%daaug_dense)
+      call densela_clear_matrix_on_gpu(DENSELA_TNL, sub%daaug_dense)
       if (allocated(sub%aaug_ipiv)) then
          deallocate(sub%aaug_ipiv)
       end if
