@@ -40,9 +40,19 @@ module module_densela
       integer,parameter :: DENSELA_TNL                   = 3
       integer,parameter :: DENSELA_DECOMP                = 4
 
-! Matrix/Vector formatting to use
-      integer,parameter :: DECOMP_MF_UNIT_DIAG_U         = 11
-      integer,parameter :: DECOMP_MF_UNIT_DIAG_L         = 12
+! Decomposer/Solver used by DENSELA_DECOMP
+! Decomposers:
+! 0-2 -> Parallel Crout Method  (8, 16, 32) => UnitDiagIn_U
+! 3-5 -> Iterative Crout Method (8, 16, 32) => UnitDiagIn_U
+! 6   -> CuSolverDnXgetrfWrapper            => UnitDiagIn_L
+integer,parameter :: DECOMP_DECOMPOSER = 6
+
+! Solvers:
+! 0-4 -> Iterative Solver (8, 16, 32, 64, 128) => UnitDiagIn_U
+! 5   -> CuBLAStrsvWrapper (U)                 => UnitDiagIn_U
+! 6   -> CuBLAStrsvWrapper (L)                 => UnitDiagIn_L
+! 7   -> CuSolverDnXgetrsWrapper               => UnitDiagIn_L
+integer,parameter :: DECOMP_SOLVER = 7
 
       !integer,parameter,private :: library = DENSELA_MAGMA
       !integer,parameter,private :: library = DENSELA_LAPACK
@@ -178,13 +188,14 @@ subroutine densela_getrf_matrix_on_gpu(library, m, n, dA, lddA, ipiv)
             !if      (kr == REAL64) then
             !   ! double precision
             call magmaf_dgetrf_gpu(m, n, dA, lddA, ipiv, lapack_info)
+            write (*,*) "Decomposing using 'MAGMAdgetrf_gpu'"
             !else if (kr == REAL32) then
             !   ! single precision
             !   call magmaf_sgemv(trans, m, n, alpha, A, lda, x, incx, beta, y, incy, queue)
             !end if
 #endif
          case (DENSELA_DECOMP)
-            call decomposer_on_gpu(m, dA, ipiv, DECOMP_MF_UNIT_DIAG_U)
+            call decomposer_on_gpu(m, dA, ipiv, DECOMP_DECOMPOSER)
          case default
             call error(routine_name, "Illegal library.")
       end select
@@ -323,9 +334,10 @@ subroutine densela_getrs_matrix_on_gpu(library, trans, n, nrhs, dA, lddA, ipiv, 
 
             ! free memory on GPU
             ierr = magmaf_free(dB)
+            write (*,*) "Solving using 'MAGMAdgetrs_gpu'"
 #endif
          case (DENSELA_DECOMP)
-            call solver_on_gpu(n, nrhs, dA, B, ipiv, DECOMP_MF_UNIT_DIAG_U)
+            call solver_on_gpu(n, nrhs, dA, B, ipiv, DECOMP_DECOMPOSER, DECOMP_SOLVER)
          case default
             call error(routine_name, "Illegal library.")
       end select
