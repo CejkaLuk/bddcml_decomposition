@@ -1,0 +1,412 @@
+#!/usr/bin/env bash
+
+# exit whenever a command fails
+set -e
+
+# enable recursive globbing
+shopt -s globstar
+
+### CONSTANTS
+# Decomposers and which matrix format they produce:
+# 0-2 -> Parallel Crout Method  (8, 16, 32) => UnitDiagIn_U
+# 3-5 -> Iterative Crout Method (8, 16, 32) => UnitDiagIn_U
+# 6   -> CuSolverDnXgetrfWrapper            => UnitDiagIn_L
+# 7   -> MAGMAdgetrf_gpu (in BDDCML)
+
+# Solvers and which matrix format they support:
+# 0-4 -> Iterative Solver (8, 16, 32, 64, 128) => UnitDiagIn_U
+# 5   -> CuBLAStrsvWrapper (U)                 => UnitDiagIn_U
+# 6   -> CuBLAStrsvWrapper (L)                 => UnitDiagIn_L
+# 7   -> CuSolverDnXgetrsWrapper               => UnitDiagIn_L
+# 8   -> MAGMAdgetrs_gpu (in BDDCML)
+
+# All Decomposers
+declare -a DECOMPOSERS=("PCM_8" "PCM_16" "PCM_32" "ICM_8" "ICM_16" "ICM_32" "CuSolverDnXgetrf" "MAGMAdgetrf_gpu")
+# All Solvers
+declare -a SOLVERS=("IS_8" "IS_16" "IS_32" "IS_64" "IS_128" "CuBLAStrsv_U" "CuBLAStrsv_L" "CuSolverDnXgetrs" "MAGMAdgetrs_gpu")
+# Repository root - assuming that the script was launched from 'benchmarks/poisson_on_cube'
+REPO_ROOT=`readlink -f "../../"`
+# Benchmarks directory
+BENCHMARKS_DIR="$REPO_ROOT/benchmarks"
+# Benchmark executable
+BENCHMARK_EXECUTABLE="$REPO_ROOT/examples/poisson_on_cube"
+BENCHMARK_NAME="BDDCML Benchmark: poisson_on_cube"
+
+## Helpful functions Part 1: Variable verification
+# Assure existence of output directory
+function assure_existence_of_output_dir() {
+   output_dir=$1
+   output_dir_abs_path=`readlink -f $output_dir`
+   if [ ! -d "$output_dir_abs_path" ]; then
+      >&2 echo "-> Warning: Output directory not found: '$output_dir_abs_path'. Creating..."
+      mkdir $output_dir_abs_path
+   fi
+   echo "$output_dir_abs_path"
+}
+
+# Check validity of loops
+function check_loops() {
+   loops=$1
+   if [[ $loops -le 0 ]]; then
+      >&2 echo "-!> Error: Cannot run benchmark for '$loops' loops. Please choose a number greater than 0. Exiting..."
+      exit 1
+   fi
+   echo "$loops"
+}
+
+# Check validity of elements per sub edge
+function check_el_per_sub_edge() {
+   max_el_per_sub_edge=$1
+   if [[ $max_el_per_sub_edge -le 0 ]]; then
+      >&2 echo "-!> Error: Cannot run benchmark for '$max_el_per_sub_edge' elements per sub edge. Please choose a number greater than 0. Exiting..."
+      exit 1
+   fi
+   echo "$max_el_per_sub_edge"
+}
+
+# Global variables
+OUTPUT_DIR="log-files"
+LOOPS=2
+STARTING_EL_PER_SUB_EDGE=5
+MAX_EL_PER_SUB_EDGE=10
+
+# Script usage
+function print_help() {
+	echo "Please use the following input parameters:"
+   echo "-s=<starting_el_per_sub_edge>   |  --starting-el-per-sub-edge=<max_sub_edge>   [Optional] Starting number of elements per sub edge. Default value is '$STARTING_EL_PER_SUB_EDGE'. The benchmark runs increments of 5: from $STARTING_EL_PER_SUB_EDGE to $MAX_EL_PER_SUB_EDGE."
+   echo "-m=<max_el_persub_edge>         |  --max-el-per-sub-edge=<max_sub_edge>        [Optional] Maximum number of elements per sub edge. Default value is '$MAX_EL_PER_SUB_EDGE'. The benchmark runs increments of 5: from $STARTING_EL_PER_SUB_EDGE to $MAX_EL_PER_SUB_EDGE."
+   echo "-l=<loops>                      |  --loops=<loops>                             [Optional] number of loops to run the 'poisson_on_cube' executable for - for result averaging. Default is '$LOOPS'"
+	echo "-o=<dir>                        |  --output-dir=<dir>                          [Optional] output directory where the log files will be stored. Default is '$OUTPUT_DIR' and it is created in the current dir if it doesn't exist."
+}
+
+# Too many input parameters supplied
+if [ $# -gt 4 ]
+then
+	echo "Not enough input parameters supplied."
+	print_help
+	exit 1
+fi
+
+for i in "$@"; do
+	case $1 in
+      -s=*|--starting-el-per-sub-edge=*)
+			STARTING_EL_PER_SUB_EDGE="${i#*=}"
+			shift # past argument=value
+			;;
+      -m=*|--max-el-per-sub-edge=*)
+         MAX_EL_PER_SUB_EDGE="${i#*=}"
+         shift # past argument=value
+         ;;
+		-l=*|--loops=*)
+			LOOPS="${i#*=}"
+			shift # past argument=value
+			;;
+      -o=*|--output-dir=*)
+         OUTPUT_DIR="${i#*=}"
+         shift # past argument=value
+         ;;
+      -*|--*)
+         echo "Input parameter '$1' is not supported."
+         print_help
+         exit 1
+         ;;
+      *)
+         ;;
+	esac
+done
+
+# Assure the existence of the output directory
+OUTPUT_DIR=$(assure_existence_of_output_dir "$OUTPUT_DIR")
+
+# Check the if the number of loops is valid
+LOOPS=$(check_loops "$LOOPS")
+
+# Check the starting num. of elements per sub edge
+STARTING_EL_PER_SUB_EDGE=$(check_el_per_sub_edge "$STARTING_EL_PER_SUB_EDGE")
+
+# Check the max. num. of elements per sub edge
+MAX_EL_PER_SUB_EDGE=$(check_el_per_sub_edge "$MAX_EL_PER_SUB_EDGE")
+
+## Helpful functions Part 2: Procedures, Project compilation
+function set_procedure() {
+   current_dir=$(pwd)
+   procedure_type=$1
+   procedure_value=$2
+   cd $REPO_ROOT
+   echo "-> module_densela.F90 -> integer,parameter :: DECOMP_$procedure_type = $procedure_value"
+   sed -i "s/integer,parameter :: DECOMP_$procedure_type \+= [[:digit:]]\+/integer,parameter :: DECOMP_$procedure_type = $procedure_value/" $REPO_ROOT/src/module_densela.F90
+   cd $current_dir
+}
+
+function set_decomposer() {
+   decomposer=$1
+   set_procedure "DECOMPOSER" "$decomposer"
+}
+
+function set_solver() {
+   solver=$1
+   set_procedure "SOLVER" "$solver"
+}
+
+function set_method_library_with_argument() {
+   local method=$1
+   local argument_after_lib=$2
+   local library=$3
+   local directory=$4
+   echo "-> Setting method '$method' library with argument after the lib '$argument_after_lib' to 'DENSELA_$library'"
+   sed -i "s/call $method(DENSELA_[[:upper:]]\+, $argument_after_lib/call $method(DENSELA_$library, $argument_after_lib/" $REPO_ROOT/$directory
+}
+
+function set_method_library() {
+   local method=$1
+   local library=$2
+   local directory=$3
+   set_method_library_with_argument "$method" "" "$library" "$directory"
+   # sed -i "s/call $method(DENSELA_[[:upper:]]\+,/call $method(DENSELA_$library,/" $REPO_ROOT/$directory
+}
+
+function set_allocator_deallocator_library_for_decomposers() {
+   local library=$1
+   echo "-> Setting allocator and deallocator library to DENSELA_$library"
+
+   # Set allocator library
+   set_method_library_with_argument "densela_copy_matrix_to_gpu" "sub%laaug_dense1" "$library" "src/module_dd.f90"
+   # Set deallocator library
+   set_method_library_with_argument "densela_clear_matrix_on_gpu" "sub%daaug_dense" "$library" "src/module_dd.f90"
+}
+
+function set_decomposer_solver_library() {
+   local library=$1
+
+   if [[ "$library" == "DECOMP" ]]; then
+      set_allocator_deallocator_library_for_decomposers "TNL"
+   elif [[ "$library" == "MAGMA" ]]; then
+      set_allocator_deallocator_library_for_decomposers "MAGMA"
+   else
+      echo "Library '$library' not one of ['DECOMP', 'MAGMA']. Exiting..."
+      exit 1
+   fi
+
+   echo "-> Setting decomposer and solver library to DENSELA_$library"
+   # Set getrf library
+   set_method_library "densela_getrf_matrix_on_gpu" "$library" "src/module_dd.f90"
+   # Set getrs library
+   set_method_library "densela_getrs_matrix_on_gpu" "$library" "src/module_dd.f90"
+}
+
+function delete_existing_log_file() {
+   if [[ -f "$make_clean_all_file" ]]; then
+      echo "WARNING: deleting an existing log file $make_clean_all_file"
+      rm -f "$make_clean_all_file"
+   fi
+}
+
+function compile() {
+   current_dir=$(pwd)
+
+   cd $REPO_ROOT
+
+   echo "---> Compiling BDDCML..."
+   make all >> $OUTPUT_DIR/make_clean_all.log 2>&1
+
+   cd $current_dir
+}
+
+function clean_and_compile() {
+   current_dir=$(pwd)
+
+   cd $REPO_ROOT
+   echo "---> Removing compiled files"
+   make clean >> $OUTPUT_DIR/make_clean_all.log 2>&1
+
+   compile
+
+   cd $current_dir
+}
+
+### BENCHMARK
+echo -e "======================================== [ START ] $BENCHMARK_NAME\n"
+echo "===== Parameters"
+echo "LOOPS                        = $LOOPS"
+echo "OUTPUT DIRECTORY             = $OUTPUT_DIR"
+echo "STARTING EL PER SUB EDGE     = $STARTING_EL_PER_SUB_EDGE"
+echo "MAXIMUM EL PER SUB EDGE      = $MAX_EL_PER_SUB_EDGE"
+echo "DECOMPOSERS                  = ${DECOMPOSERS[@]}"
+echo "SOLVERS                      = ${SOLVERS[@]}"
+echo -e "=====\n"
+
+## BENCHMARK - DECOMPOSERS
+echo -e "\n==================== [ START ] $BENCHMARK_NAME - Decomposers\n"
+
+# Solvers used for benchmarking decomposers - their performance is not measured
+SOLVER_U=5 # CuBLAStrsv_U
+SOLVER_L=6 # CuBLAStrsv_L
+# Set default solver to CuBLAStrsv_U
+solver=$SOLVER_U
+
+# Make sure that DECOMP is set as the library decomposers/solvers (and TNL as the (de)allocator for matrices on the GPU)
+set_decomposer_solver_library "DECOMP"
+
+# Remove the existing log file for "make clean all"
+delete_existing_log_file "$REPO_ROOT/make_clean_all.log"
+
+# Set starting decomposer/solver - for warmup
+set_solver $solver
+set_decomposer 0
+# Clean and compile BDDCML
+clean_and_compile
+
+cd $BENCHMARKS_DIR
+
+# Warmup - redirect output to file
+echo -e "\n\n===== [ START ] Warmup - Benchmark poisson_on_cube (8 4 2) Decomposer (0: ${DECOMPOSERS[0]}) Solver ($solver: ${SOLVERS[$solver]})"
+$BENCHMARK_EXECUTABLE 8 4 2 > $OUTPUT_DIR/benchmark_warmup.log 2>&1
+echo -e "===== [ FINISH ] Warmup - Benchmark poisson_on_cube (8 4 2) Decomposer (0: ${DECOMPOSERS[0]}) Solver ($solver: ${SOLVERS[$solver]})\n"
+
+## TODO: Assert that warmup log file has no errors, if it does -> exit with failure
+# - Maybe enough to check that the results at the end of the log are OK
+
+# Begin timer
+SECONDS=0
+
+num_decomposers=${#DECOMPOSERS[@]}
+for (( decomposer = 0; decomposer < $num_decomposers; decomposer++ ))
+do
+   # If the benchmarked decomposer is 6 (CuSolverDnXgetrf) -> change solver to CuBLAStrsv_L
+   if [[ $decomposer -eq 6 ]]; then
+      solver=$SOLVER_L
+      set_solver $solver
+   fi
+
+   # If the decomposer is <= 6 -> just change decomposer for the DECOMP library function
+   if [[ $decomposer -le 6 ]]; then
+      set_decomposer $decomposer
+   else # If the benchmarked decomposer is 7 (MAGMAdgetrf_gpu) -> change decomposer/solver library to MAGMA
+      set_decomposer_solver_library "MAGMA"
+      solver=8 # MAGMAdgetrs_gpu
+   fi
+
+   decomposer_name="${DECOMPOSERS[$decomposer]}"
+   solver_name="${SOLVERS[$solver]}"
+   echo -e "\n========== [ START ] Decomposer ($decomposer: $decomposer_name) - using '$solver: $solver_name' as solver"
+
+   compile
+
+   for (( elements = $STARTING_EL_PER_SUB_EDGE; elements <= $MAX_EL_PER_SUB_EDGE; elements += 5 ))
+   do
+      config="$elements 4 2"
+      CONFIGURATION_WITH_UNDERSCORES="${elements}_4_2"
+      echo -e "\n===== [ START ] Configuration ($config)"
+
+      for (( loop = 1; loop <= $LOOPS; loop++ ))
+      do
+         log_file="$OUTPUT_DIR/decomposers/raw/$decomposer_name/$CONFIGURATION_WITH_UNDERSCORES/poisson_benchmark_loop_${loop}.log"
+         echo "Loop: $loop -> $log_file"
+
+         log_file_dirname=$(dirname "$log_file")
+         if [[ ! -d "$log_file_dirname" ]]; then
+            mkdir -p "$log_file_dirname"
+         fi
+
+         if [[ -f "$log_file" ]]; then
+            echo "WARNING: deleting an existing log file $log_file"
+            rm -f "$log_file"
+         fi
+
+         $BENCHMARK_EXECUTABLE $config >> $log_file 2>&1
+      done
+
+      echo -e "===== [ FINISH ] Configuration ($config)"
+   done
+
+   echo -e "========== [ FINISH ] Decomposer ($decomposer: $decomposer_name) - using '$solver: $solver_name' as solver\n"
+done
+
+echo -e "==================== [ FINISH ] $BENCHMARK_NAME - Decomposers\n"
+# End timer
+secs=$SECONDS
+ELAPSED="Elapsed: $(($secs / 3600))hrs $((($secs / 60) % 60))min $(($secs % 60))sec"
+echo -e "$ELAPSED"
+
+## BENCHMARK - SOLVERS
+echo -e "\n==================== [ START ] $BENCHMARK_NAME - Solvers\n"
+
+# Decomposers used for benchmarking solvers - their performance is not measured
+DECOMPOSER_U=0 # PCM8
+DECOMPOSER_L=6 # CuSolverDnXgetrf
+# Set default decomposer to PCM8
+decomposer=$DECOMPOSER_U
+set_decomposer $decomposer
+
+# Make sure that DECOMP is set as the library decomposers/solvers (and TNL as the (de)allocator for matrices on the GPU)
+set_decomposer_solver_library "DECOMP"
+
+cd $BENCHMARKS_DIR
+
+# Begin timer
+SECONDS=0
+
+# '- 1' so that the last solver in SOLVERS (MAGMAdgetrs) is not run - it was already run in DECOMPOSERS -> reuse results
+num_benchmarked_solvers=$((${#SOLVERS[@]} - 1))
+echo "num_solvers = $num_benchmarked_solvers"
+for (( solver = 0; solver < $num_benchmarked_solvers; solver++ ))
+do
+   # If the benchmarked solver is 6, 7 (CuBLAStrsv_L, CuSolverDnXgetrs) -> change decomposer to CuSolverDnXgetrf
+   if [[ $solver -eq 6 || $solver -eq 7 ]]; then
+      decomposer=$DECOMPOSER_L
+      set_decomposer $decomposer
+   fi
+
+   set_solver $solver
+
+   solver_name="${SOLVERS[$solver]}"
+   decomposer_name="${DECOMPOSERS[$decomposer]}"
+   echo -e "\n========== [ START ] Solver ($solver: $solver_name) - using '$decomposer: $decomposer_name' as decomposer"
+
+   compile
+
+   for (( elements = $STARTING_EL_PER_SUB_EDGE; elements <= $MAX_EL_PER_SUB_EDGE; elements += 5 ))
+   do
+      config="$elements 4 2"
+      CONFIGURATION_WITH_UNDERSCORES="${elements}_4_2"
+      echo -e "\n===== [ START ] Configuration ($config)"
+
+      for (( loop = 1; loop <= $LOOPS; loop++ ))
+      do
+         log_file="$OUTPUT_DIR/solvers/raw/$solver_name/$CONFIGURATION_WITH_UNDERSCORES/poisson_benchmark_loop_${loop}.log"
+         echo "Loop: $loop -> $log_file"
+
+         log_file_dirname=$(dirname "$log_file")
+         if [[ ! -d "$log_file_dirname" ]]; then
+            mkdir -p "$log_file_dirname"
+         fi
+
+         if [[ -f "$log_file" ]]; then
+            echo "WARNING: deleting an existing log file $log_file"
+            rm -f "$log_file"
+         fi
+
+         $BENCHMARK_EXECUTABLE $config >> $log_file 2>&1
+      done
+
+      echo -e "===== [ FINISH ] Configuration ($config)"
+   done
+
+   echo -e "========== [ FINISH ] Solver ($solver: $solver_name) - using '$decomposer: $decomposer_name' as decomposer\n"
+done
+
+# Copy MAGMA logs to solvers/raw/MAGMAdgetrs_gpu
+directory="$OUTPUT_DIR/solvers/raw/${SOLVERS[8]}"
+if [[ -d "$directory" ]]; then
+   cp -r $OUTPUT_DIR/decomposers/raw/${DECOMPOSERS[7]}/* $directory/
+else
+   cp -r $OUTPUT_DIR/decomposers/raw/${DECOMPOSERS[7]} $directory
+fi
+
+echo -e "==================== [ FINISH ] $BENCHMARK_NAME - Solvers\n"
+# End timer
+secs=$SECONDS
+ELAPSED="Elapsed: $(($secs / 3600))hrs $((($secs / 60) % 60))min $(($secs % 60))sec"
+echo -e "$ELAPSED"
+
+echo -e "\n\n======================================== [ FINISH ] $BENCHMARK_NAME"

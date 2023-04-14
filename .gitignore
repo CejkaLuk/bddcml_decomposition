@@ -1,0 +1,26 @@
+# VSCode
+/.vscode
+
+# docs
+doc/**.pdf
+doc/**.toc
+doc/**.log
+
+# Benchmarks
+benchmarks/**/log-files
+benchmarks/**/poisson_solution*
+
+# Examples compiled files
+examples/bddcml_global
+examples/bddcml_local
+examples/poisson_on_cube
+
+# Poisson on Cube output files
+**/poisson_solution*
+
+# Python files
+**__pycache__
+
+# Fortran output files
+**.mod
+**.o
