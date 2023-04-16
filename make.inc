@@ -23,8 +23,8 @@ BDDCML_RANLIB = ranlib
 # Project dir
 PROJ_DIR = $(HOME)/github/sistek
 DEPS_DIR = $(PROJ_DIR)/deps
-MUMPS_DIR = $(DEPS_DIR)/MUMPS_5.5.1
-MAGMA_DIR = $(DEPS_DIR)/magma-2.6.2
+MUMPS_DIR = $(DEPS_DIR)/MUMPS/5.5.1
+MAGMA_DIR = $(DEPS_DIR)/magma/2.7.1
 TNL_BDDCML_INTERFRACE_DIR= $(DEPS_DIR)/tnl_bddcml_interface
 
 #*********** Includes
@@ -43,7 +43,7 @@ BDDCML_INCTNL_BDDCML_INTERFACE = -I$(TNL_BDDCML_INTERFRACE_DIR)
 
 #*********** Libraries
 # library being created
-BDDCML_ROOT         = $(PROJ_DIR)/bddcml
+BDDCML_ROOT         = $(PROJ_DIR)/bddcml_decomposition
 BDDCML_LIB_DIR      = $(BDDCML_ROOT)/lib
 LIBBDDCML           = $(BDDCML_LIB_DIR)/libbddcml.a
 # MUMPS
