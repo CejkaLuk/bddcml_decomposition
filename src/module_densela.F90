@@ -181,6 +181,8 @@ subroutine densela_getrf_matrix_on_gpu(library, m, n, dA, lddA, ipiv)
          call error(routine_name, 'Size of ipiv not sufficient.')
       end if
 
+      call cudaMemGetInfo()
+
       select case (library)
 #if defined(BDDCML_WITH_MAGMA)
          case (DENSELA_MAGMA)
@@ -199,6 +201,8 @@ subroutine densela_getrf_matrix_on_gpu(library, m, n, dA, lddA, ipiv)
          case default
             call error(routine_name, "Illegal library.")
       end select
+
+      call cudaMemGetInfo()
 
       if (profile) then
          call time_end(time_factorization)
@@ -305,6 +309,8 @@ subroutine densela_getrs_matrix_on_gpu(library, trans, n, nrhs, dA, lddA, ipiv, 
          call time_start(.true.)
       end if
 
+      call cudaMemGetInfo()
+
       select case (library)
 #if defined(BDDCML_WITH_MAGMA)
          case (DENSELA_MAGMA)
@@ -341,6 +347,8 @@ subroutine densela_getrs_matrix_on_gpu(library, trans, n, nrhs, dA, lddA, ipiv, 
          case default
             call error(routine_name, "Illegal library.")
       end select
+
+      call cudaMemGetInfo()
 
       if (profile) then
          call time_end(time_backsubstitution)
