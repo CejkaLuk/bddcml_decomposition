@@ -109,9 +109,15 @@ def get_krylov_num_pcg_iterations(lst: list) -> int:
    index_pcg_iterations = get_index_of_first_entry_containing(lst, "KRYLOV_BDDCPCG: Number of PCG iterations:")
    return int(get_space_separated(lst[index_pcg_iterations]).split("iterations: ", 1)[1])
 
+def get_krylov_num_pcg_iterations_and_rel_residual_from_first_file_matching(files_dir: str, file_regex: str) -> tuple: # int, float
+   first_file = get_files_in_dir_matching(files_dir, file_regex)[0]
+   file_lines = strip_entries(get_file_lines_as_list(first_file))
+   iterations = get_krylov_num_pcg_iterations(file_lines)
+   return (iterations, get_krylov_iteration_residual(file_lines, iterations))
+
 def get_krylov_iteration_residual(lst: list, iteration: int, iteration_index: int = None) -> float:
    if iteration_index is None:
-      iteration_index = get_index_krylov_iteration(lst, iteration) + 1
+      iteration_index = get_index_krylov_iteration(lst, iteration)
    residual_line = lst[iteration_index + 1]
    return float(substring_after(residual_line, "residual:").strip())
 
@@ -192,7 +198,8 @@ def average_files_to_dataframe(files_dir: str, file_regex: str, procedure_type: 
    file_list = get_files_in_dir_matching(files_dir, file_regex)
    if len(file_list) > 0:
       df_list = [file_to_dataframe(file, procedure_type) for file in file_list]
-      return pd.concat(df_list).groupby('Procedure Name').mean().reset_index()
+      return (pd.concat(df_list).groupby('Procedure Name')['Total Time [s]'].agg(['mean', 'std']).reset_index()
+                                .rename(columns={'mean': 'Total Time [s]', 'std': 'Std. Dev. [s]'}))
 
 def get_num_el_per_sub_edge(file_path: str) -> int:
    poisson_config = get_entries_matching(file_path.split("/"), ["^[0-9]+_[0-9]+_[0-9]+$"])[0]
@@ -212,6 +219,9 @@ def log_files_in_dir_tree_to_dataframe(dir: list, input_file_regex: str, procedu
       for poisson_config_dir in get_subdirectories(procedure_dir):
          df_avg = average_files_to_dataframe(poisson_config_dir, input_file_regex, procedure_type)
          df_avg.insert(0, "Num. el. per sub-edge", get_num_el_per_sub_edge(poisson_config_dir))
+         pcg_iterations, rel_residual = get_krylov_num_pcg_iterations_and_rel_residual_from_first_file_matching(poisson_config_dir, input_file_regex)
+         df_avg["Krylov PCG num. iters."] = pcg_iterations
+         df_avg["Krylov PCG rel. residual"] = rel_residual
          average_dfs.append(df_avg)
    return pd.concat(average_dfs).sort_values(by=["Num. el. per sub-edge", "Procedure Name"]).reset_index(drop=True)
 
@@ -237,7 +247,8 @@ def compute_speedup_column(df: pd.DataFrame, baseline_procedure: str) -> pd.Data
    baseline_times = df[df["Procedure Name"] == baseline_procedure].set_index("Num. el. per sub-edge")["Total Time [s]"]
 
    # Compute and the speedup column for each procedure relative to the baseline_procedure
-   df[f"Speedup rel. to {baseline_procedure}"] = baseline_times.loc[df["Num. el. per sub-edge"]].values / df["Total Time [s]"].values
+   # df[f"Speedup rel. to {baseline_procedure}"] = baseline_times.loc[df["Num. el. per sub-edge"]].values / df["Total Time [s]"].values
+   df.insert(len(df.columns) - 2, f"Speedup rel. to {baseline_procedure}", baseline_times.loc[df["Num. el. per sub-edge"]].values / df["Total Time [s]"].values)
    return df
 
 def save_to_csv(df: pd.DataFrame, output_file_path: str):
