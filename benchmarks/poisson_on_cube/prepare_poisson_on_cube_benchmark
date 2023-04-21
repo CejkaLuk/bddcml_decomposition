@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+
+# exit whenever a command fails
+set -e
+
+# enable recursive globbing
+shopt -s globstar
+
+### CONSTANTS
+# Decomposers and which matrix format they produce:
+# 0-2 -> Parallel Crout Method  (8, 16, 32) => UnitDiagIn_U
+# 3-5 -> Iterative Crout Method (8, 16, 32) => UnitDiagIn_U
+# 6   -> CuSolverDnXgetrfWrapper            => UnitDiagIn_L
+# 7   -> MAGMAdgetrf_gpu (in BDDCML)
+
+# Solvers and which matrix format they support:
+# 0-4 -> Iterative Solver (8, 16, 32, 64, 128) => UnitDiagIn_U
+# 5   -> CuBLAStrsvWrapper (U)                 => UnitDiagIn_U
+# 6   -> CuBLAStrsvWrapper (L)                 => UnitDiagIn_L
+# 7   -> CuSolverDnXgetrsWrapper               => UnitDiagIn_L
+# 8   -> MAGMAdgetrs_gpu (in BDDCML)
+
+# All Decomposers
+declare -a DECOMPOSERS=("PCM_8" "PCM_16" "PCM_32" "ICM_8" "ICM_16" "ICM_32" "CuSolverDnXgetrf" "MAGMAdgetrf_gpu")
+# All Solvers
+declare -a SOLVERS=("IS_8" "IS_16" "IS_32" "IS_64" "IS_128" "CuBLAStrsv_U" "CuBLAStrsv_L" "CuSolverDnXgetrs" "MAGMAdgetrs_gpu")
+# Repository root - assuming that the script was launched from 'benchmarks/poisson_on_cube'
+REPO_ROOT=`readlink -f "../../"`
+# Examples directory
+EXAMPLES_DIR="$REPO_ROOT/examples"
+# Benchmarks directory
+BENCHMARK_DIR="$REPO_ROOT/benchmarks/poisson_on_cube"
+# Executables directory
+EXECUTABLES_DIR="$BENCHMARK_DIR/executables"
+# Compilation logs directory
+COMPILATION_LOGS_DIR="$BENCHMARK_DIR/compilation_logs"
+# Benchmark executable
+BENCHMARK_EXECUTABLE="$EXAMPLES_DIR/poisson_on_cube"
+
+## Helpful functions
+function set_procedure() {
+   local current_dir=$(pwd)
+   local procedure_type=$1
+   local procedure_value=$2
+   cd $REPO_ROOT
+   echo "-> module_densela.F90 -> integer,parameter :: DECOMP_$procedure_type = $procedure_value"
+   sed -i "s/integer,parameter :: DECOMP_$procedure_type \+= [[:digit:]]\+/integer,parameter :: DECOMP_$procedure_type = $procedure_value/" $REPO_ROOT/src/module_densela.F90
+   cd $current_dir
+}
+
+function set_decomposer() {
+   local decomposer=$1
+   set_procedure "DECOMPOSER" "$decomposer"
+}
+
+function set_solver() {
+   local solver=$1
+   set_procedure "SOLVER" "$solver"
+}
+
+function set_method_library_with_argument() {
+   local method=$1
+   local argument_after_lib=$2
+   local library=$3
+   local directory=$4
+   echo "-> Setting method '$method' library with argument after the lib '$argument_after_lib' to 'DENSELA_$library'"
+   sed -i "s/call $method(DENSELA_[[:upper:]]\+, $argument_after_lib/call $method(DENSELA_$library, $argument_after_lib/" $REPO_ROOT/$directory
+}
+
+function set_method_library() {
+   local method=$1
+   local library=$2
+   local directory=$3
+   set_method_library_with_argument "$method" "" "$library" "$directory"
+}
+
+function set_allocator_deallocator_library_for_decomposers() {
+   local library=$1
+   echo "-> Setting allocator and deallocator library to DENSELA_$library"
+
+   # Set allocator library
+   set_method_library_with_argument "densela_copy_matrix_to_gpu" "sub%laaug_dense1" "$library" "src/module_dd.f90"
+   # Set deallocator library
+   set_method_library_with_argument "densela_clear_matrix_on_gpu" "sub%daaug_dense" "$library" "src/module_dd.f90"
+}
+
+function set_decomposer_solver_library() {
+   local library=$1
+
+   if [[ "$library" == "DECOMP" ]]; then
+      set_allocator_deallocator_library_for_decomposers "TNL"
+   elif [[ "$library" == "MAGMA" ]]; then
+      set_allocator_deallocator_library_for_decomposers "MAGMA"
+   else
+      echo "Library '$library' not one of ['DECOMP', 'MAGMA']. Exiting..."
+      exit 1
+   fi
+
+   echo "-> Setting decomposer and solver library to DENSELA_$library"
+   # Set getrf library
+   set_method_library "densela_getrf_matrix_on_gpu" "$library" "src/module_dd.f90"
+   # Set getrs library
+   set_method_library "densela_getrs_matrix_on_gpu" "$library" "src/module_dd.f90"
+}
+
+function clean_and_compile() {
+   local procedure_combo=$1
+   local current_dir=$(pwd)
+
+   cd $REPO_ROOT
+   echo "-> Removing compiled files"
+   make clean > $COMPILATION_LOGS_DIR/${procedure_combo}_make_clean_all.log 2>&1
+   echo "-> Compiling BDDCML..."
+   make -j$(nproc) all >> $COMPILATION_LOGS_DIR/${procedure_combo}_make_clean_all.log 2>&1
+
+   cd $current_dir
+}
+
+function compile_combo() {
+   local decomposer=$1
+   local solver=$2
+
+   local decomposer_name="${DECOMPOSERS[$decomposer]}"
+   local solver_name="${SOLVERS[$solver]}"
+   local procedure_combo="${decomposer_name}_${solver_name}"
+   local output_file="$EXECUTABLES_DIR/poisson_on_cube_$procedure_combo"
+
+   echo -e "\n====> Preparing poisson_on_cube_${decomposer_name}_${solver_name}"
+
+   # If the executable already exists -> skip bcs the executables dir is cleared at the beginning of this script
+   if [[ -f "$output_file" ]]; then
+      echo -e "File already exists: $output_file"
+      echo "Skipping..."
+   else
+      set_decomposer $decomposer
+      set_solver $solver
+
+      clean_and_compile $procedure_combo
+
+      mv $BENCHMARK_EXECUTABLE $output_file
+      echo "==> Output: $output_file"
+   fi
+}
+
+function clear_and_create_dir() {
+   local dir=$1
+
+   if [[ -d "$dir" ]]; then
+      echo "Clearing dir: $dir"
+      rm -rf "$dir"
+   fi
+   echo "Creating dir: $dir"
+   mkdir -p "$dir"
+}
+
+# Clear the executables directory
+clear_and_create_dir $EXECUTABLES_DIR
+
+# Clear the executables directory
+clear_and_create_dir $COMPILATION_LOGS_DIR
+
+cd $REPO_ROOT
+
+### Compile poisson_on_cube for every decomposer/solver
+
+# Solvers used for benchmarking decomposers - their performance is not measured
+SOLVER_U=5 # CuBLAStrsv_U
+SOLVER_L=6 # CuBLAStrsv_L
+
+## Compile poisson_on_cube with MAGMA library
+decomposer=7
+solver=8
+set_decomposer_solver_library "MAGMA"
+compile_combo $decomposer $solver
+
+## Compile poisson_on_cube with TNL library - Decomposers
+
+# Set default solver
+solver=$SOLVER_U
+# Set default library for decomposers/solvers
+set_decomposer_solver_library "DECOMP"
+
+# - 1 to exclue magma which is already compiled
+num_tnl_decomposers=$((${#DECOMPOSERS[@]} - 1))
+for (( decomposer = 0; decomposer < $num_tnl_decomposers; decomposer++ ))
+do
+   # If the benchmarked decomposer is 6 (CuSolverDnXgetrf) -> change solver to CuBLAStrsv_L
+   if [[ $decomposer -eq 6 ]]; then
+      solver=$SOLVER_L
+   fi
+
+   compile_combo $decomposer $solver
+done
+
+## Compile poisson_on_cube with TNL library - Solvers
+
+# Decomposers used for benchmarking solvers - their performance is not measured
+DECOMPOSER_U=0 # PCM8
+DECOMPOSER_L=6 # CuSolverDnXgetrf
+
+# Set default decomposer
+decomposer=0 # PCM_8
+
+# - 1 to exclue magma which is already compiled
+num_tnl_solvers=$((${#SOLVERS[@]} - 1))
+for (( solver = 0; solver < $num_tnl_solvers; solver++ ))
+do
+   # If the benchmarked solver is 6, 7 (CuBLAStrsv_L, CuSolverDnXgetrs) -> change decomposer to CuSolverDnXgetrf
+   if [[ $solver -eq 6 || $solver -eq 7 ]]; then
+      decomposer=$DECOMPOSER_L
+   fi
+
+   compile_combo $decomposer $solver
+done
+

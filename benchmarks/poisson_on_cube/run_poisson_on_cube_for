@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+
+# exit whenever a command fails
+set -e
+
+# enable recursive globbing
+shopt -s globstar
+
+### CONSTANTS
+# Decomposers and which matrix format they produce:
+# 0-2 -> Parallel Crout Method  (8, 16, 32) => UnitDiagIn_U
+# 3-5 -> Iterative Crout Method (8, 16, 32) => UnitDiagIn_U
+# 6   -> CuSolverDnXgetrfWrapper            => UnitDiagIn_L
+# 7   -> MAGMAdgetrf_gpu (in BDDCML)
+
+# Solvers and which matrix format they support:
+# 0-4 -> Iterative Solver (8, 16, 32, 64, 128) => UnitDiagIn_U
+# 5   -> CuBLAStrsvWrapper (U)                 => UnitDiagIn_U
+# 6   -> CuBLAStrsvWrapper (L)                 => UnitDiagIn_L
+# 7   -> CuSolverDnXgetrsWrapper               => UnitDiagIn_L
+# 8   -> MAGMAdgetrs_gpu (in BDDCML)
+
+# All Decomposers
+declare -a DECOMPOSERS=("PCM_8" "PCM_16" "PCM_32" "ICM_8" "ICM_16" "ICM_32" "CuSolverDnXgetrf" "MAGMAdgetrf_gpu")
+# All Solvers
+declare -a SOLVERS=("IS_8" "IS_16" "IS_32" "IS_64" "IS_128" "CuBLAStrsv_U" "CuBLAStrsv_L" "CuSolverDnXgetrs" "MAGMAdgetrs_gpu")
+# Repository root - assuming that the script was launched from 'benchmarks/poisson_on_cube'
+REPO_ROOT=`readlink -f "../../"`
+# Benchmarks directory
+BENCHMARK_DIR="$REPO_ROOT/benchmarks/poisson_on_cube"
+# Executables directory
+EXECUTABLES_DIR="$BENCHMARK_DIR/executables"
+
+## Input variables
+procedure_type=$1 # DECOMPOSERS, or SOLVERS -> run only one type
+procedure_id=$2   # Can be either a decomposer or solver id
+start_el_per_sub_edge=$3
+end_el_per_sub_edge=$4
+increment_el_per_sub_edge=$5
+loops=$6
+output_dir=`readlink -f "$7"`
+
+function check_executable_exists() {
+   local executable=$1
+
+   if [[ ! -f "$executable" ]]; then
+      echo "-!> ERROR: Executable NOT FOUND: $executable"
+      echo "Skipping..."
+      exit 0
+   fi
+}
+
+# Create the output dir if it doesn't exist already
+if [[ ! -d "$output_dir" ]]; then
+   mkdir -p "$output_dir"
+fi
+
+cd $EXECUTABLES_DIR
+
+## BENCHMARK - DECOMPOSERS
+if [[ "$procedure_type" == "DECOMPOSERS" ]]; then
+   # Solvers used for benchmarking decomposers - their performance is not measured
+   SOLVER_U=5 # CuBLAStrsv_U
+   SOLVER_L=6 # CuBLAStrsv_L
+
+   decomposer=$procedure_id
+   solver=$SOLVER_U
+
+   # If the benchmarked decomposer is 6 (CuSolverDnXgetrf) -> change solver to CuBLAStrsv_L
+   if [[ $decomposer -eq 6 ]]; then
+      solver=$SOLVER_L
+   fi
+
+   # If the benchmarked decomposer is 7 (MAGMAdgetrf_gpu) -> set the corresponding solver
+   if [[ $decomposer -eq 7 ]]; then
+      solver=8 # MAGMAdgetrs_gpu
+   fi
+
+   decomposer_name="${DECOMPOSERS[$decomposer]}"
+   solver_name="${SOLVERS[$solver]}"
+   procedure_combo="${decomposer_name}_${solver_name}"
+   executable="$EXECUTABLES_DIR/poisson_on_cube_$procedure_combo"
+
+   echo -e "\n\n========== [ START ] Decomposer ($decomposer: $decomposer_name) - using '$solver: $solver_name' as solver"
+
+   check_executable_exists $executable
+
+   ## TODO: Assert that warmup log file has no errors, if it does -> exit with failure
+   # - Maybe enough to check that the results at the end of the log are OK
+   # Warmup - redirect output to file
+   echo -e "\n===== [ START ] Warmup - Benchmark poisson_on_cube (5 4 2) Decomposer ($decomposer: $decomposer_name) Solver ($solver: $solver_name)"
+   log_file="$output_dir/decomposers/raw/$decomposer_name/benchmark_warmup_$decomposer_name.log"
+   log_file_dirname=$(dirname "$log_file")
+   if [[ ! -d "$log_file_dirname" ]]; then
+      mkdir -p "$log_file_dirname"
+   fi
+   $executable 5 4 2 > $log_file 2>&1
+   echo -e "===== [ FINISH ] Warmup - Benchmark poisson_on_cube (5 4 2) Decomposer ($decomposer: $decomposer_name) Solver ($solver: $solver_name)"
+
+   for (( elements = $start_el_per_sub_edge; elements <= $end_el_per_sub_edge; elements += $increment_el_per_sub_edge ))
+   do
+      config="$elements 4 2"
+      configuration_with_underscores="${elements}_4_2"
+      echo -e "\n===== [ START ] Configuration ($config)"
+
+      for (( loop = 1; loop <= $loops; loop++ ))
+      do
+         log_file="$output_dir/decomposers/raw/$decomposer_name/$configuration_with_underscores/poisson_benchmark_loop_${loop}.log"
+         echo "Loop: $loop -> $log_file"
+
+         log_file_dirname=$(dirname "$log_file")
+         if [[ ! -d "$log_file_dirname" ]]; then
+            mkdir -p "$log_file_dirname"
+         fi
+
+         if [[ -f "$log_file" ]]; then
+            echo "WARNING: deleting an existing log file $log_file"
+            rm -f "$log_file"
+         fi
+
+         $executable $config >> $log_file 2>&1
+      done
+
+      echo -e "===== [ FINISH ] Configuration ($config)"
+   done
+
+   echo -e "========== [ FINISH ] Decomposer ($decomposer: $decomposer_name) - using '$solver: $solver_name' as solver\n"
+fi
+
+## BENCHMARK - SOLVERS
+if [[ "$procedure_type" == "SOLVERS" ]]; then
+   # Decomposers used for benchmarking solvers - their performance is not measured
+   DECOMPOSER_U=0 # PCM8
+   DECOMPOSER_L=6 # CuSolverDnXgetrf
+
+   solver=$procedure_id
+   decomposer=$DECOMPOSER_U
+
+   # If the benchmarked solver is 6, 7 (CuBLAStrsv_L, CuSolverDnXgetrs) -> change decomposer to CuSolverDnXgetrf
+   if [[ $solver -eq 6 || $solver -eq 7 ]]; then
+      decomposer=$DECOMPOSER_L
+   fi
+
+   # If the benchmarked solver is 8 (MAGMAdgetrs_gpu) -> set corresponding decomposer
+   if [[ $solver -eq 8 ]]; then
+      decomposer=7 # MAGMAdgetrf_gpu
+   fi
+
+   solver_name="${SOLVERS[$solver]}"
+   decomposer_name="${DECOMPOSERS[$decomposer]}"
+   procedure_combo="${decomposer_name}_${solver_name}"
+   executable="$EXECUTABLES_DIR/poisson_on_cube_$procedure_combo"
+
+   echo -e "\n========== [ START ] Solver ($solver: $solver_name) - using '$decomposer: $decomposer_name' as decomposer"
+
+   check_executable_exists $executable
+
+   ## TODO: Assert that warmup log file has no errors, if it does -> exit with failure
+   # - Maybe enough to check that the results at the end of the log are OK
+   # Warmup - redirect output to file
+   echo -e "\n===== [ START ] Warmup - Benchmark poisson_on_cube (5 4 2) Solver ($solver: $solver_name) Decomposer ($decomposer: $decomposer_name)"
+   log_file="$output_dir/solvers/raw/$solver_name/benchmark_warmup_$solver_name.log"
+   log_file_dirname=$(dirname "$log_file")
+   if [[ ! -d "$log_file_dirname" ]]; then
+      mkdir -p "$log_file_dirname"
+   fi
+   $executable 5 4 2 > $log_file 2>&1
+   echo -e "===== [ FINISH ] Warmup - Benchmark poisson_on_cube (5 4 2) Solver ($solver: $solver_name) Decomposer ($decomposer: $decomposer_name)"
+
+   for (( elements = $start_el_per_sub_edge; elements <= $end_el_per_sub_edge; elements += $increment_el_per_sub_edge ))
+   do
+      config="$elements 4 2"
+      configuration_with_underscores="${elements}_4_2"
+      echo -e "\n===== [ START ] Configuration ($config)"
+
+      for (( loop = 1; loop <= $loops; loop++ ))
+      do
+         log_file="$output_dir/solvers/raw/$solver_name/$configuration_with_underscores/poisson_benchmark_loop_${loop}.log"
+         echo "Loop: $loop -> $log_file"
+
+         log_file_dirname=$(dirname "$log_file")
+         if [[ ! -d "$log_file_dirname" ]]; then
+            mkdir -p "$log_file_dirname"
+         fi
+
+         if [[ -f "$log_file" ]]; then
+            echo "WARNING: deleting an existing log file $log_file"
+            rm -f "$log_file"
+         fi
+
+         $executable $config > $log_file 2>&1
+      done
+
+      echo -e "===== [ FINISH ] Configuration ($config)"
+   done
+
+   echo -e "========== [ FINISH ] Solver ($solver: $solver_name) - using '$decomposer: $decomposer_name' as decomposer\n"
+fi

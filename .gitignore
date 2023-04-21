@@ -9,6 +9,8 @@ doc/**.log
 # Benchmarks
 benchmarks/**/log-files
 benchmarks/**/poisson_solution*
+benchmarks/**/executables
+benchmarks/**/compilation_logs
 
 # Examples - compiled files
 examples/bddcml_global
