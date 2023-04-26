@@ -59,18 +59,22 @@ integer,parameter :: DECOMP_SOLVER = 7
 
 contains
 
-!*******************************
-subroutine densela_init(library)
-!*******************************
+!*************************************
+subroutine densela_init(library, rank)
+!*************************************
 ! Initialization of a library for dense LA.
 ! Some libraries do not need this.
       use module_utils
       implicit none
 ! Numerical library to use
       integer,intent(in) :: library
+! Rank to be used for determining the right GPU
+      integer,intent(in) :: rank
 
 ! local vars
       character(*),parameter:: routine_name = 'densela_init'
+
+      integer :: my_device, number_of_gpus
 
       select case (library)
          case (DENSELA_LAPACK)
@@ -80,11 +84,22 @@ subroutine densela_init(library)
          case (DENSELA_MAGMA)
             ! MAGMA
             call magmaf_init()
+
+            number_of_gpus = magmaf_num_gpus()
+            write (*,*) "Number of GPUs: ", number_of_gpus
+            my_device = mod(rank,number_of_gpus)
+            write (*,*) "My device: ", my_device
+            call magmaf_setdevice(my_device)
 #endif
+         case (DENSELA_TNL)
+            call cudaGetDeviceCount(number_of_gpus)
+            write (*,*) "Number of GPUs: ", number_of_gpus
+            my_device = mod(rank,number_of_gpus)
+            write (*,*) "My device: ", my_device
+            call cudaSetDevice(my_device)
          case default
             call error(routine_name, "Illegal library.")
       end select
-
 end subroutine
 
 !****************************************************
@@ -181,7 +196,7 @@ subroutine densela_getrf_matrix_on_gpu(library, m, n, dA, lddA, ipiv)
          call error(routine_name, 'Size of ipiv not sufficient.')
       end if
 
-      call cudaMemGetInfo()
+      ! call cudaMemGetInfo()
 
       select case (library)
 #if defined(BDDCML_WITH_MAGMA)
@@ -202,7 +217,7 @@ subroutine densela_getrf_matrix_on_gpu(library, m, n, dA, lddA, ipiv)
             call error(routine_name, "Illegal library.")
       end select
 
-      call cudaMemGetInfo()
+      ! call cudaMemGetInfo()
 
       if (profile) then
          call time_end(time_factorization)
@@ -309,7 +324,7 @@ subroutine densela_getrs_matrix_on_gpu(library, trans, n, nrhs, dA, lddA, ipiv, 
          call time_start(.true.)
       end if
 
-      call cudaMemGetInfo()
+      ! call cudaMemGetInfo()
 
       select case (library)
 #if defined(BDDCML_WITH_MAGMA)
@@ -348,7 +363,7 @@ subroutine densela_getrs_matrix_on_gpu(library, trans, n, nrhs, dA, lddA, ipiv, 
             call error(routine_name, "Illegal library.")
       end select
 
-      call cudaMemGetInfo()
+      ! call cudaMemGetInfo()
 
       if (profile) then
          call time_end(time_backsubstitution)

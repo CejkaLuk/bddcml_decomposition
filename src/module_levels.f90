@@ -409,7 +409,8 @@ subroutine levels_init(nl,nsublev,lnsublev,nsub_loc_1,comm_init,numbase,just_dir
       levels(iactive_level)%i_am_active_in_this_level = levels(iactive_level-1)%i_am_active_in_this_level
       levels(iactive_level)%is_new_comm_created       = .false.
 
-      call densela_init(DENSELA_MAGMA)
+      call MPI_COMM_RANK(levels(iactive_level)%comm_all, myid, ierr)
+      call densela_init(DENSELA_MAGMA, myid)
 
       !do iactive_level = 1,nlevels
       !   print *, 'myid ',myid,':level ',iactive_level,': Active cores:', &

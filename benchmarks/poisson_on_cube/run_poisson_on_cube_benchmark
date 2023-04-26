@@ -38,8 +38,8 @@ BENCHMARK_NAME="BDDCML Benchmark: poisson_on_cube"
 ## Helpful functions Part 1: Variable verification
 # Assure existence of output directory
 function assure_existence_of_output_dir() {
-   output_dir=$1
-   output_dir_abs_path=`readlink -f $output_dir`
+   local output_dir=$1
+   local output_dir_abs_path=`readlink -f $output_dir`
    if [ ! -d "$output_dir_abs_path" ]; then
       >&2 echo "-> Warning: Output directory not found: '$output_dir_abs_path'. Creating..."
       mkdir $output_dir_abs_path

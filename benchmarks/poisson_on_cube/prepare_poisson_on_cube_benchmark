@@ -74,10 +74,12 @@ function set_method_library() {
    set_method_library_with_argument "$method" "" "$library" "$directory"
 }
 
-function set_allocator_deallocator_library_for_decomposers() {
+function set_init_allocator_deallocator_library_for_decomposers() {
    local library=$1
    echo "-> Setting allocator and deallocator library to DENSELA_$library"
 
+   # Set init library
+   set_method_library_with_argument "densela_init" "myid" "$library" "src/module_levels.f90"
    # Set allocator library
    set_method_library_with_argument "densela_copy_matrix_to_gpu" "sub%laaug_dense1" "$library" "src/module_dd.f90"
    # Set deallocator library
@@ -88,9 +90,9 @@ function set_decomposer_solver_library() {
    local library=$1
 
    if [[ "$library" == "DECOMP" ]]; then
-      set_allocator_deallocator_library_for_decomposers "TNL"
+      set_init_allocator_deallocator_library_for_decomposers "TNL"
    elif [[ "$library" == "MAGMA" ]]; then
-      set_allocator_deallocator_library_for_decomposers "MAGMA"
+      set_init_allocator_deallocator_library_for_decomposers "MAGMA"
    else
       echo "Library '$library' not one of ['DECOMP', 'MAGMA']. Exiting..."
       exit 1
@@ -179,7 +181,6 @@ compile_combo $decomposer $solver
 solver=$SOLVER_U
 # Set default library for decomposers/solvers
 set_decomposer_solver_library "DECOMP"
-
 # - 1 to exclue magma which is already compiled
 num_tnl_decomposers=$((${#DECOMPOSERS[@]} - 1))
 for (( decomposer = 0; decomposer < $num_tnl_decomposers; decomposer++ ))
