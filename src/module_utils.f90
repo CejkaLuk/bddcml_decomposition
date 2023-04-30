@@ -1409,7 +1409,7 @@ subroutine time_print_plain(msg,time)
 implicit none
 character(*),intent(in):: msg
 real(kr),intent(in)    :: time
-character(*),parameter:: info_fmt = '("Time of ",a,": ",f13.3," s")'
+character(*),parameter:: info_fmt = '("Time of ",a,": ",f13.9," s")'
 if ( .not. suppress_output ) then
    write(unit_stdout,'(a)') '****PROFILING*****************************'
    write(unit_stdout,info_fmt) msg,time
