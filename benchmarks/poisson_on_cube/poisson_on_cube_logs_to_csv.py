@@ -242,12 +242,11 @@ def create_dir_for_output_files(dir: str) -> str:
 ########################################################################################################
 ## DataFrame operations
 def compute_speedup_column(df: pd.DataFrame, baseline_procedure: str) -> pd.DataFrame:
-   # Get the taken by baseline_procedure for each number of elements per sub-edge
+   # Get the total time taken by baseline_procedure for each number of elements per sub-edge
    # Use the number of elements as the index
    baseline_times = df[df["Procedure Name"] == baseline_procedure].set_index("Num. el. per sub-edge")["Total Time [s]"]
 
    # Compute and the speedup column for each procedure relative to the baseline_procedure
-   # df[f"Speedup rel. to {baseline_procedure}"] = baseline_times.loc[df["Num. el. per sub-edge"]].values / df["Total Time [s]"].values
    df.insert(len(df.columns) - 2, f"Speedup rel. to {baseline_procedure}", baseline_times.loc[df["Num. el. per sub-edge"]].values / df["Total Time [s]"].values)
    return df
 
