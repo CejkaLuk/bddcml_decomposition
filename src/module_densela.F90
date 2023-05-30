@@ -49,8 +49,8 @@ integer,parameter :: DECOMP_DECOMPOSER = 6
 
 ! Solvers:
 ! 0-4 -> Iterative Solver (8, 16, 32, 64, 128) => UnitDiagIn_U
-! 5   -> CuBLAStrsvWrapper (U)                 => UnitDiagIn_U
-! 6   -> CuBLAStrsvWrapper (L)                 => UnitDiagIn_L
+! 5   -> CuBLAStrsmWrapper (U)                 => UnitDiagIn_U
+! 6   -> CuBLAStrsmWrapper (L)                 => UnitDiagIn_L
 ! 7   -> CuSolverDnXgetrsWrapper               => UnitDiagIn_L
 integer,parameter :: DECOMP_SOLVER = 7
 

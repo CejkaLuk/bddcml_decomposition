@@ -15,15 +15,15 @@ shopt -s globstar
 
 # Solvers and which matrix format they support:
 # 0-4 -> Iterative Solver (8, 16, 32, 64, 128) => UnitDiagIn_U
-# 5   -> CuBLAStrsvWrapper (U)                 => UnitDiagIn_U
-# 6   -> CuBLAStrsvWrapper (L)                 => UnitDiagIn_L
+# 5   -> CuBLAStrsmWrapper (U)                 => UnitDiagIn_U
+# 6   -> CuBLAStrsmWrapper (L)                 => UnitDiagIn_L
 # 7   -> CuSolverDnXgetrsWrapper               => UnitDiagIn_L
 # 8   -> MAGMAdgetrs_gpu (in BDDCML)
 
 # All Decomposers
 declare -a DECOMPOSERS=("PCM_8" "PCM_16" "PCM_32" "ICM_8" "ICM_16" "ICM_32" "CuSolverDnXgetrf" "MAGMAdgetrf_gpu")
 # All Solvers
-declare -a SOLVERS=("IS_8" "IS_16" "IS_32" "IS_64" "IS_128" "CuBLAStrsv_U" "CuBLAStrsv_L" "CuSolverDnXgetrs" "MAGMAdgetrs_gpu")
+declare -a SOLVERS=("IS_8" "IS_16" "IS_32" "IS_64" "IS_128" "CuBLAStrsm_U" "CuBLAStrsm_L" "CuSolverDnXgetrs" "MAGMAdgetrs_gpu")
 # Repository root - assuming that the script was launched from 'benchmarks/poisson_on_cube'
 REPO_ROOT=`readlink -f "../../"`
 # Examples directory
@@ -166,8 +166,8 @@ cd $REPO_ROOT
 ### Compile poisson_on_cube for every decomposer/solver
 
 # Solvers used for benchmarking decomposers - their performance is not measured
-SOLVER_U=5 # CuBLAStrsv_U
-SOLVER_L=6 # CuBLAStrsv_L
+SOLVER_U=5 # CuBLAStrsm_U
+SOLVER_L=6 # CuBLAStrsm_L
 
 ## Compile poisson_on_cube with MAGMA library
 decomposer=7
@@ -185,7 +185,7 @@ set_decomposer_solver_library "DECOMP"
 num_tnl_decomposers=$((${#DECOMPOSERS[@]} - 1))
 for (( decomposer = 0; decomposer < $num_tnl_decomposers; decomposer++ ))
 do
-   # If the benchmarked decomposer is 6 (CuSolverDnXgetrf) -> change solver to CuBLAStrsv_L
+   # If the benchmarked decomposer is 6 (CuSolverDnXgetrf) -> change solver to CuBLAStrsm_L
    if [[ $decomposer -eq 6 ]]; then
       solver=$SOLVER_L
    fi
@@ -206,7 +206,7 @@ decomposer=0 # PCM_8
 num_tnl_solvers=$((${#SOLVERS[@]} - 1))
 for (( solver = 0; solver < $num_tnl_solvers; solver++ ))
 do
-   # If the benchmarked solver is 6, 7 (CuBLAStrsv_L, CuSolverDnXgetrs) -> change decomposer to CuSolverDnXgetrf
+   # If the benchmarked solver is 6, 7 (CuBLAStrsm_L, CuSolverDnXgetrs) -> change decomposer to CuSolverDnXgetrf
    if [[ $solver -eq 6 || $solver -eq 7 ]]; then
       decomposer=$DECOMPOSER_L
    fi

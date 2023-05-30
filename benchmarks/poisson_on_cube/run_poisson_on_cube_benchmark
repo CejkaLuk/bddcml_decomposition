@@ -15,15 +15,15 @@ shopt -s globstar
 
 # Solvers and which matrix format they support:
 # 0-4 -> Iterative Solver (8, 16, 32, 64, 128) => UnitDiagIn_U
-# 5   -> CuBLAStrsvWrapper (U)                 => UnitDiagIn_U
-# 6   -> CuBLAStrsvWrapper (L)                 => UnitDiagIn_L
+# 5   -> CuBLAStrsmWrapper (U)                 => UnitDiagIn_U
+# 6   -> CuBLAStrsmWrapper (L)                 => UnitDiagIn_L
 # 7   -> CuSolverDnXgetrsWrapper               => UnitDiagIn_L
 # 8   -> MAGMAdgetrs_gpu (in BDDCML)
 
 # All Decomposers
 declare -a DECOMPOSERS=("PCM_8" "PCM_16" "PCM_32" "ICM_8" "ICM_16" "ICM_32" "CuSolverDnXgetrf" "MAGMAdgetrf_gpu")
 # All Solvers
-declare -a SOLVERS=("IS_8" "IS_16" "IS_32" "IS_64" "IS_128" "CuBLAStrsv_U" "CuBLAStrsv_L" "CuSolverDnXgetrs" "MAGMAdgetrs_gpu")
+declare -a SOLVERS=("IS_8" "IS_16" "IS_32" "IS_64" "IS_128" "CuBLAStrsm_U" "CuBLAStrsm_L" "CuSolverDnXgetrs" "MAGMAdgetrs_gpu")
 # Repository root - assuming that the script was launched from 'benchmarks/poisson_on_cube'
 REPO_ROOT=`readlink -f "../../"`
 # Benchmarks directory
