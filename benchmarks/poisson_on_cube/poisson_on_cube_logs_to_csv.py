@@ -24,12 +24,17 @@ def substring_after(s, delim):
 
 ########################################################################################################
 ## Dictionary/List Operations
-def add_to_dict(dct: dict, entry1: str, entry2: int, col1="Procedure Name", col2="Total Time [s]"):
+def add_to_dict(dct: dict, entry1: str, entry2: int, col1="Procedure Name", col2="ProTotal Time [s]"):
+   add_to_dict(entry1=entry1, entry2=entry2, col1=col1, col2=col2, entry3=None, col3=None)
+
+def add_to_dict(dct: dict, entry1: str, entry2: int, entry3: float, col1="Procedure Name", col2="Total Time [s]", col3="PC Setup Time [s]"):
    dct[col1].append(entry1)
    dct[col2].append(entry2)
+   if all(v is not None for v in [entry3, col3]):
+      dct[col3].append(entry3)
 
-def init_dict(col1="Procedure Name", col2="Total Time [s]") -> dict:
-   return {col1: [], col2: []}
+def init_dict(col1="Procedure Name", col2="Total Time [s]", col3="PC Setup Time [s]") -> dict:
+   return {col1: [], col2: [], col3: []}
 
 def get_entries_matching(lst: list, regexes: list) -> list:
    return [entry for entry in lst if any(re.search(regex, entry) for regex in regexes)]
@@ -51,6 +56,11 @@ def get_index_preconditioner_setup_begin(lst: list) -> int:
 
 def get_index_preconditioner_setup_end(lst: list) -> int:
    return get_index_of_first_entry_containing(lst, "Preconditioner set-up done.")
+
+def get_preconditioner_setup_total_time(lst: list) -> float:
+   index_pcsetup_total_time = get_index_of_first_entry_matching(lst, "^pc_setup[ ]+[0-9]+.[0-9]+[ ]s")
+   total_time = find_between(lst[index_pcsetup_total_time], "pc_setup", "s")
+   return float(total_time)
 
 ########################################################################################################
 ## Decomposer/Solver Name/Time
@@ -163,16 +173,18 @@ def file_to_dataframe(file_path: str, procedure_type: str = "all", individual_ba
    file_lines = strip_entries(get_file_lines_as_list(file_path))
 
    benchmark_data = init_dict()
+   # Get the Preconditioner setup time from the file
+   pcsetup_time = get_preconditioner_setup_total_time(file_lines)
 
    if procedure_type in ["decomposers", "all"]:
       # Add Decomposer total time
       decomposer_name, decomposer_time = get_decomposer_name_time(file_lines)
-      add_to_dict(benchmark_data, f"{decomposer_name}", decomposer_time)
+      add_to_dict(benchmark_data, f"{decomposer_name}", decomposer_time, pcsetup_time)
 
    if procedure_type in ["solvers", "all"]:
       # Add Solver total time
       solver_name, solver_time = get_solver_name_time(file_lines)
-      add_to_dict(benchmark_data, f"{solver_name}", solver_time)
+      add_to_dict(benchmark_data, f"{solver_name}", solver_time, pcsetup_time)
 
       if individual_backsubstitutions:
          # Add initial Solver total time
@@ -198,8 +210,18 @@ def average_files_to_dataframe(files_dir: str, file_regex: str, procedure_type: 
    file_list = get_files_in_dir_matching(files_dir, file_regex)
    if len(file_list) > 0:
       df_list = [file_to_dataframe(file, procedure_type) for file in file_list]
-      return (pd.concat(df_list).groupby('Procedure Name')['Total Time [s]'].agg(['mean', 'std']).reset_index()
-                                .rename(columns={'mean': 'Total Time [s]', 'std': 'Std. Dev. [s]'}))
+      # Get the mean and stddev of the total time and the pc setup time
+      averaged_df = pd.concat(df_list).groupby('Procedure Name') \
+                                      .agg({'Total Time [s]': ['mean', 'std'], 'PC Setup Time [s]': ['mean', 'std']}) \
+                                      .reset_index()
+      # The resulting df has extra row values below the headers "map, std" -> concatenate with the main header
+      averaged_df.columns = averaged_df.columns.map(''.join)
+      # Rename the columns to something more friendly
+      averaged_df = averaged_df.rename(columns={'Total Time [s]mean': 'Procedure Total Time [s]',
+                                                'Total Time [s]std': 'Procedure Std. Dev. [s]',
+                                                'PC Setup Time [s]mean': 'PC Setup Time [s]',
+                                                'PC Setup Time [s]std': 'PC Setup Std. Dev. [s]'})
+      return averaged_df
 
 def get_num_el_per_sub_edge(file_path: str) -> int:
    poisson_config = get_entries_matching(file_path.split("/"), ["^[0-9]+_[0-9]+_[0-9]+$"])[0]
@@ -241,13 +263,13 @@ def create_dir_for_output_files(dir: str) -> str:
 
 ########################################################################################################
 ## DataFrame operations
-def compute_speedup_column(df: pd.DataFrame, baseline_procedure: str) -> pd.DataFrame:
+def compute_speedup_column(df: pd.DataFrame, baseline_procedure: str, time_column: str, output_column_prefix: str) -> pd.DataFrame:
    # Get the total time taken by baseline_procedure for each number of elements per sub-edge
    # Use the number of elements as the index
-   baseline_times = df[df["Procedure Name"] == baseline_procedure].set_index("Num. el. per sub-edge")["Total Time [s]"]
+   baseline_times = df[df["Procedure Name"] == baseline_procedure].set_index("Num. el. per sub-edge")[time_column]
 
    # Compute and the speedup column for each procedure relative to the baseline_procedure
-   df.insert(len(df.columns) - 2, f"Speedup rel. to {baseline_procedure}", baseline_times.loc[df["Num. el. per sub-edge"]].values / df["Total Time [s]"].values)
+   df.insert(len(df.columns) - 2, f"{output_column_prefix} Speedup rel. to {baseline_procedure}", baseline_times.loc[df["Num. el. per sub-edge"]].values / df[time_column].values)
    return df
 
 def save_to_csv(df: pd.DataFrame, output_file_path: str):
@@ -277,6 +299,9 @@ def save_dataframe_plot(df: pd.DataFrame, title: str, y_col: str, dir: str, file
    for i in range(df["Num. el. per sub-edge"].min(), df["Num. el. per sub-edge"].max() + 1, 5):
       ax.axvline(x=i, color="grey", alpha=0.5, linestyle="-")
 
+   # Sanitize file name
+   filename = filename.replace(' ', '-')
+
    plt.savefig(f"{dir}/{filename}.pdf")
    ax.set_yscale("log")
    ax.set_ylabel("Time [s] log-scaled" )
@@ -284,11 +309,11 @@ def save_dataframe_plot(df: pd.DataFrame, title: str, y_col: str, dir: str, file
    plt.savefig(f"{dir}/{filename}-log.pdf")
    plt.savefig(f"{dir}/{filename}-log.png", dpi=200)
 
-def save_time_plot(df: pd.DataFrame, procedure_type: str, dir: str):
-   save_dataframe_plot(df, f"Comparison of {procedure_type} for poisson_on_cube problem", "Total Time [s]", dir, f"{procedure_type}_time")
+def save_time_plot(df: pd.DataFrame, time_column_prefix, procedure_type: str, dir: str):
+   save_dataframe_plot(df, f"Comparison of {time_column_prefix} Time of {procedure_type} for poisson_on_cube problem", f"{time_column_prefix} Time [s]", dir, f"{procedure_type}_time_{time_column_prefix}")
 
-def save_speedup_plot(df: pd.DataFrame, procedure_type: str, baseline_procedure: str, dir: str):
-   save_dataframe_plot(df, f"Comparison of the speedup of {procedure_type} relative to {baseline_procedure}", f"Speedup rel. to {baseline_procedure}", dir, f"{procedure_type}_speedup")
+def save_speedup_plot(df: pd.DataFrame, speedup_column_prefix: str, procedure_type: str, baseline_procedure: str, dir: str):
+   save_dataframe_plot(df, f"Comparison of the {speedup_column_prefix} Speedup of {procedure_type} Relative to {baseline_procedure}", f"{speedup_column_prefix} Speedup rel. to {baseline_procedure}", dir, f"{procedure_type}_speedup_{speedup_column_prefix}")
 
 ########################################################################################################
 ## Arguments
@@ -343,7 +368,8 @@ def main():
 
    # Compute the speedup relative to the existing decomposer/solver in BDDCML - MAGMAdgetrf_gpu/MAGMAdgetrs_gpu
    baseline_procedure = "MAGMAdgetrf_gpu" if procedure_type == "decomposers" else "MAGMAdgetrs_gpu"
-   df = compute_speedup_column(df, baseline_procedure)
+   df = compute_speedup_column(df, baseline_procedure, "Procedure Total Time [s]", "Procedure")
+   df = compute_speedup_column(df, baseline_procedure, "PC Setup Time [s]", "PC Setup")
 
    # Create a separate log directory for the parsed results
    dir = create_dir_for_output_files(f"{output_dir}/{procedure_type}/parsed_results")
@@ -354,8 +380,10 @@ def main():
 
    # Save MATLAB plots
    print(df)
-   save_time_plot(df, procedure_type, dir)
-   save_speedup_plot(df, procedure_type, baseline_procedure, dir)
+   save_time_plot(df, "Procedure Total", procedure_type, dir)
+   save_time_plot(df, "PC Setup", procedure_type, dir)
+   save_speedup_plot(df, "Procedure", procedure_type, baseline_procedure, dir)
+   save_speedup_plot(df, "PC Setup", procedure_type, baseline_procedure, dir)
 
 
 if __name__== "__main__" :
