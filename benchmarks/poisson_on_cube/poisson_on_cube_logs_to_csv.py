@@ -113,7 +113,7 @@ def get_index_krylov_end(lst: list) -> int:
    return get_index_of_first_entry_containing(lst, "Krylov method done.")
 
 def get_index_krylov_iteration(lst: list, iteration) -> int:
-   return get_index_of_first_entry_matching(lst, f"^KRYLOV_BDDCPCG:[ ]+iteration:[ ]+[{iteration}]$")
+   return get_index_of_first_entry_matching(lst, f"^KRYLOV_BDDCPCG:[ ]+iteration:[ ]+{iteration}$")
 
 def get_krylov_num_pcg_iterations(lst: list) -> int:
    index_pcg_iterations = get_index_of_first_entry_containing(lst, "KRYLOV_BDDCPCG: Number of PCG iterations:")
