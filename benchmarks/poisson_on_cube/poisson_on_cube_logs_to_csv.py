@@ -89,6 +89,13 @@ def get_decomposer_time(lst: list) -> int:
 def get_decomposer_name_time(lst: list) -> tuple: # str, float
    return (get_decomposer_name(lst), get_decomposer_time(lst))
 
+def get_ICM_processing_tolerance(lst: list) -> str:
+   index_first_ICM_process_tol = get_index_of_first_entry_matching(lst, "^Using processing tolerance = ")
+   if index_first_ICM_process_tol is not None:
+      index_process_tol_in_line = lst[index_first_ICM_process_tol].index("= ") + 2
+      return str(lst[index_first_ICM_process_tol][index_process_tol_in_line:])
+   return None
+
 def get_solver_name(lst: list) -> str:
    return get_procedure_name_from_first_entry_containing(lst, "Solving using ")
 
@@ -179,6 +186,10 @@ def file_to_dataframe(file_path: str, procedure_type: str = "all", individual_ba
    if procedure_type in ["decomposers", "all"]:
       # Add Decomposer total time
       decomposer_name, decomposer_time = get_decomposer_name_time(file_lines)
+      if "ICM" in decomposer_name:
+         processing_tolerance_ICM = get_ICM_processing_tolerance(file_lines)
+         if processing_tolerance_ICM is not None:
+            decomposer_name += f" {processing_tolerance_ICM}"
       add_to_dict(benchmark_data, f"{decomposer_name}", decomposer_time, pcsetup_time)
 
    if procedure_type in ["solvers", "all"]:
