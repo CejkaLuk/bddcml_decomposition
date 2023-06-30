@@ -24,17 +24,21 @@ def substring_after(s, delim):
 
 ########################################################################################################
 ## Dictionary/List Operations
-def add_to_dict(dct: dict, entry1: str, entry2: int, col1="Procedure Name", col2="ProTotal Time [s]"):
-   add_to_dict(entry1=entry1, entry2=entry2, col1=col1, col2=col2, entry3=None, col3=None)
+def add_entry_to_dict_if_not_null(dct: dict, entry, key: str):
+   if all(v is not None for v in [entry, key]):
+      dct[key].append(entry)
 
-def add_to_dict(dct: dict, entry1: str, entry2: int, entry3: float, col1="Procedure Name", col2="Total Time [s]", col3="PC Setup Time [s]"):
+def add_to_dict(dct: dict, entry1: str, entry2: int, col1="Procedure Name", col2="Total Time [s]"):
+   add_to_dict(entry1=entry1, entry2=entry2, col1=col1, col2=col2, entry3=None, col3=None, entry4=None, col4=None)
+
+def add_to_dict(dct: dict, entry1: str, entry2: int, entry3: float, entry4: float, col1="Procedure Name", col2="Total Time [s]", col3="PC Setup Time [s]", col4="Krylov Method Time [s]"):
    dct[col1].append(entry1)
    dct[col2].append(entry2)
-   if all(v is not None for v in [entry3, col3]):
-      dct[col3].append(entry3)
+   add_entry_to_dict_if_not_null(dct, entry3, col3)
+   add_entry_to_dict_if_not_null(dct, entry4, col4)
 
-def init_dict(col1="Procedure Name", col2="Total Time [s]", col3="PC Setup Time [s]") -> dict:
-   return {col1: [], col2: [], col3: []}
+def init_dict(col1="Procedure Name", col2="Total Time [s]", col3="PC Setup Time [s]", col4="Krylov Method Time [s]") -> dict:
+   return {col1: [], col2: [], col3: [], col4: []}
 
 def get_entries_matching(lst: list, regexes: list) -> list:
    return [entry for entry in lst if any(re.search(regex, entry) for regex in regexes)]
@@ -132,6 +136,11 @@ def get_krylov_num_pcg_iterations_and_rel_residual_from_first_file_matching(file
    iterations = get_krylov_num_pcg_iterations(file_lines)
    return (iterations, get_krylov_iteration_residual(file_lines, iterations))
 
+def get_krylov_time(lst: list) -> float:
+   index_krylov_time = get_index_of_first_entry_matching(lst, "^Krylov method[ ]+[0-9]+.[0-9]+[ ]s")
+   total_time = find_between(lst[index_krylov_time], "Krylov method", "s")
+   return float(total_time)
+
 def get_krylov_iteration_residual(lst: list, iteration: int, iteration_index: int = None) -> float:
    if iteration_index is None:
       iteration_index = get_index_krylov_iteration(lst, iteration)
@@ -182,6 +191,8 @@ def file_to_dataframe(file_path: str, procedure_type: str = "all", individual_ba
    benchmark_data = init_dict()
    # Get the Preconditioner setup time from the file
    pcsetup_time = get_preconditioner_setup_total_time(file_lines)
+   # Get the Krylov method time from the file
+   krylov_time = get_krylov_time(file_lines)
 
    if procedure_type in ["decomposers", "all"]:
       # Add Decomposer total time
@@ -190,12 +201,12 @@ def file_to_dataframe(file_path: str, procedure_type: str = "all", individual_ba
          processing_tolerance_ICM = get_ICM_processing_tolerance(file_lines)
          if processing_tolerance_ICM is not None:
             decomposer_name += f" {processing_tolerance_ICM}"
-      add_to_dict(benchmark_data, f"{decomposer_name}", decomposer_time, pcsetup_time)
+      add_to_dict(benchmark_data, f"{decomposer_name}", decomposer_time, pcsetup_time, krylov_time)
 
    if procedure_type in ["solvers", "all"]:
       # Add Solver total time
       solver_name, solver_time = get_solver_name_time(file_lines)
-      add_to_dict(benchmark_data, f"{solver_name}", solver_time, pcsetup_time)
+      add_to_dict(benchmark_data, f"{solver_name}", solver_time, pcsetup_time, krylov_time)
 
       if individual_backsubstitutions:
          # Add initial Solver total time
@@ -223,7 +234,9 @@ def average_files_to_dataframe(files_dir: str, file_regex: str, procedure_type: 
       df_list = [file_to_dataframe(file, procedure_type) for file in file_list]
       # Get the mean and stddev of the total time and the pc setup time
       averaged_df = pd.concat(df_list).groupby('Procedure Name') \
-                                      .agg({'Total Time [s]': ['mean', 'std'], 'PC Setup Time [s]': ['mean', 'std']}) \
+                                      .agg({'Total Time [s]': ['mean', 'std'],
+                                            'PC Setup Time [s]': ['mean', 'std'],
+                                            'Krylov Method Time [s]': ['mean', 'std']}) \
                                       .reset_index()
       # The resulting df has extra row values below the headers "map, std" -> concatenate with the main header
       averaged_df.columns = averaged_df.columns.map(''.join)
@@ -231,7 +244,9 @@ def average_files_to_dataframe(files_dir: str, file_regex: str, procedure_type: 
       averaged_df = averaged_df.rename(columns={'Total Time [s]mean': 'Procedure Total Time [s]',
                                                 'Total Time [s]std': 'Procedure Std. Dev. [s]',
                                                 'PC Setup Time [s]mean': 'PC Setup Time [s]',
-                                                'PC Setup Time [s]std': 'PC Setup Std. Dev. [s]'})
+                                                'PC Setup Time [s]std': 'PC Setup Std. Dev. [s]',
+                                                'Krylov Method Time [s]mean': 'Krylov Method Time [s]',
+                                                'Krylov Method Time [s]std': 'Krylov Method Std. Dev. [s]'})
       return averaged_df
 
 def get_num_el_per_sub_edge(file_path: str) -> int:
@@ -280,7 +295,7 @@ def compute_speedup_column(df: pd.DataFrame, baseline_procedure: str, time_colum
    baseline_times = df[df["Procedure Name"] == baseline_procedure].set_index("Num. el. per sub-edge")[time_column]
 
    # Compute and the speedup column for each procedure relative to the baseline_procedure
-   df.insert(len(df.columns) - 2, f"{output_column_prefix} Speedup rel. to {baseline_procedure}", baseline_times.loc[df["Num. el. per sub-edge"]].values / df[time_column].values)
+   df.insert(len(df.columns) - 4, f"{output_column_prefix} Speedup rel. to {baseline_procedure}", baseline_times.loc[df["Num. el. per sub-edge"]].values / df[time_column].values)
    return df
 
 def save_to_csv(df: pd.DataFrame, output_file_path: str):
