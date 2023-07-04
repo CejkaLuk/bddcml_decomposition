@@ -298,8 +298,34 @@ def compute_speedup_column(df: pd.DataFrame, baseline_procedure: str, time_colum
    df.insert(len(df.columns) - 4, f"{output_column_prefix} Speedup rel. to {baseline_procedure}", baseline_times.loc[df["Num. el. per sub-edge"]].values / df[time_column].values)
    return df
 
-def save_to_csv(df: pd.DataFrame, output_file_path: str):
-   df.to_csv(output_file_path, sep=',', encoding='utf-8', index=False)
+def save_to_plottable_csv(df: pd.DataFrame, output_file_path: str):
+   """Save the dataframe to a CSV so that each procedure has columns for every metrics. This allows for easier plotting."""
+   # Extract unique procedure names
+   procedure_names = df['Procedure Name'].unique()
+
+   # Create a dictionary to store the converted data
+   converted_data = {}
+
+   # Initialize the dictionary with empty lists for each procedure and each value
+   for procedure_name in procedure_names:
+      converted_data[procedure_name] = {key: [] for key in df.columns[2:]}
+
+   # Populate the dictionary with data
+   for _, row in df.iterrows():
+      procedure_name = row['Procedure Name']
+      procedure_values = row[2:]
+      for key, value in zip(df.columns[2:], procedure_values):
+         converted_data[procedure_name][key].append(value)
+
+   # Create a new DataFrame with the converted data
+   converted_df = pd.DataFrame()
+   converted_df['Num. el. per sub-edge'] = df['Num. el. per sub-edge'].unique()
+   for procedure_name in procedure_names:
+      for key, values in converted_data[procedure_name].items():
+         converted_df[f"{procedure_name} - {key}"] = values
+
+   # Write the converted DataFrame to a new CSV file
+   converted_df.to_csv(output_file_path, sep=',', encoding='utf-8', index=False)
 
 def save_to_html(df: pd.DataFrame, output_file_path: str):
    text_file = open(output_file_path, "w")
@@ -401,7 +427,7 @@ def main():
    dir = create_dir_for_output_files(f"{output_dir}/{procedure_type}/parsed_results")
 
    # Save the dataframe to a csv/html file
-   save_to_csv(df, f"{dir}/{procedure_type}_benchmark_results.csv")
+   save_to_plottable_csv(df, f"{dir}/{procedure_type}_benchmark_results_plottable.csv")
    save_to_html(df, f"{dir}/{procedure_type}_benchmark_results.html")
 
    # Save MATLAB plots
