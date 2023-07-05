@@ -123,7 +123,7 @@ program poisson_on_cube
 
 ! find components of the mesh and handle them as independent subdomains when selecting coarse dofs 
 ! recommended for unstructured meshes, but could be switched off for these simple cubes
-      integer,parameter :: find_components_int = 1
+      integer,parameter :: find_components_int = 0
 
 ! if yes, should dual graph of the mesh be used for detecting components?
       integer,parameter :: use_dual_mesh_graph_int = 1
