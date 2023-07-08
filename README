@@ -21,7 +21,7 @@ Make sure that the following necessary external libraries are available:
 For additional info, see
 http://www.math.cas.cz/~sistek/software/bddcml.html
 
-In case help is needed, write to Jakub Sistek ( sistek@math.cas.cz ).
+In case help is needed, write to Jakub Šístek ( sistek@math.cas.cz ).
 
 The library provides a simple interface callable from Fortran and C. The solution process is
 operated by several routines consequently called.
@@ -43,5 +43,18 @@ Requirements:
 - `tnl_bddcml_interface` - The interface that integrates the [Decomposition project](https://gitlab.com/tnl-project/decomposition) and [TNL](https://gitlab.com/tnl-project/tnl) into BDDCML.
 
 Execution Instructions:
-1. Prepare the executable files.
-2. 
+0. Go to `benchmarks/poisson_on_cube/`.
+1. Prepare the executable files by running the `prepare_poisson_on_cube_benchmark` script.
+   - The script will create multiple `poisson_on_cube` executables in `executables/` for various decomposition and solving implementations.
+   - The compilation logs will be available in `compilation_logs/`.
+2. Run the benchmark using the `run_poisson_on_cube_benchmark` script.
+   - This will create logs in the `log-files` directory.
+3. Parse the logs using the `poisson_on_cube_logs_to_csv.py` script:
+   ```bash
+   python3 poisson_on_cube_logs_to_csv.py -d ./log-files/decomposers/raw -i ".*.log" -o "./log-files"
+   ```
+   - This script parses the log files in the `log-files` directory and saves the results into `log-files/<benchmark_type>/parsed_results`, where `<benchmark_type>` will be either `decomposers` or `solvers`.
+   - For the script usage, execute the following:
+      ```bash
+      python3 poisson_on_cube_logs_to_csv.py --help
+      ```
