@@ -1,32 +1,47 @@
-Multilevel BDDC solver library 
+Multilevel BDDC solver library
 ==============================
 
-Install notes: 
+Installation
 --------------
 
-1. Create a make.inc within the main directory - can be done by editing make.inc.example
-   make sure all necessary external libraries are available:
-   These include: 
-   BLOPEX ( http://code.google.com/p/blopex ) 
-   MUMPS  ( http://graal.ens-lyon.fr/MUMPS )                             
-   ParMETIS ( http://glaros.dtc.umn.edu/gkhome/metis/parmetis/overview ) 
-   LAPACK ( http://www.netlib.org/lapack ) 
-   BLAS ( http://www.netlib.org/blas )
-    ( LAPACK and BLAS are often included in numerical libraries such as MKL )
+1. Create `make.inc` within the main directory from `make.inc.example`.
+Make sure that the following necessary external libraries are available:
+   - BLOPEX ( http://code.google.com/p/blopex )
+   - MUMPS  ( http://graal.ens-lyon.fr/MUMPS )
+   - ParMETIS ( http://glaros.dtc.umn.edu/gkhome/metis/parmetis/overview )
+   - LAPACK ( http://www.netlib.org/lapack )
+   - BLAS ( http://www.netlib.org/blas )
+   - **Note**: LAPACK and BLAS are often included in numerical libraries such as [MKL](https://www.intel.com/content/www/us/en/docs/onemkl/get-started-guide/2023-0/overview.html).
 
-2. type make 
-   This should first compile object and modules of src/ folder, 
-   create library libbddcml.a in lib/ folder,
-   and finally compile example solvers in examples/ solver.
+2. Run the `make` command which will:
+   - compile objects and modules in the `src/` folder,
+   - create a library `libbddcml.a` in `lib/` folder, and
+   - compile example solvers in `examples/` solver.
 
 For additional info, see
 http://www.math.cas.cz/~sistek/software/bddcml.html
+
 In case help is needed, write to Jakub Sistek ( sistek@math.cas.cz ).
 
-The library provides a simple interface callable from Fortran and C. The solution proces is
-operated by several routines consequently called. 
+The library provides a simple interface callable from Fortran and C. The solution process is
+operated by several routines consequently called.
 
-Two different modes are possible for input 
+Two different modes are possible for input:
 - user can either provide information about global mesh and a file with element matrices, or
-- user can provide division into subdomains on the first level and pass 
+- user can provide division into subdomains on the first level and pass
   subdomain matrices for each subdomain to the routine
+
+
+Benchmarks
+--------------
+
+### Poisson Equation on a Cube
+The benchmarks involve using scripts to run the `examples/poisson_on_cube` example for different decomposition algorithms on the GPU. The benchmark scripts create many log files
+which can later be parsed for the results.
+
+Requirements:
+- `tnl_bddcml_interface` - The interface that integrates the [Decomposition project](https://gitlab.com/tnl-project/decomposition) and [TNL](https://gitlab.com/tnl-project/tnl) into BDDCML.
+
+Execution Instructions:
+1. Prepare the executable files.
+2. 
